@@ -20,6 +20,75 @@ import java.util.List;
 public class CvFileService implements ICvFileService {
 
     private final CvFileRepo cvFileRepository;
+    private static final String UPLOAD_DIR = "uploads/cv/";
+@Override
+public CvFile saveOrUpdateCv(MultipartFile file) throws IOException {
+        // Créer le dossier si nécessaire
+        Path uploadPath = Paths.get(UPLOAD_DIR);
+        if (!Files.exists(uploadPath)) {
+            Files.createDirectories(uploadPath);
+        }
+
+        // Vérifier s'il y a déjà un CV
+        CvFile existingCv = getCurrentCv();
+
+        // Supprimer l'ancien fichier s'il existe
+        if (existingCv != null && existingCv.getStoragePath() != null) {
+            try {
+                Path oldFile = Paths.get(existingCv.getStoragePath());
+                Files.deleteIfExists(oldFile);
+                log.info("Ancien CV supprimé: {}", existingCv.getFilename());
+            } catch (IOException e) {
+                log.error("Erreur lors de la suppression de l'ancien CV", e);
+            }
+            // Supprimer l'entrée de la base
+            cvFileRepository.delete(existingCv);
+        }
+
+        // Générer un nom de fichier unique
+        String originalFilename = file.getOriginalFilename();
+        String newFilename = System.currentTimeMillis() + "_" + originalFilename;
+        String storagePath = UPLOAD_DIR + newFilename;
+
+        // Sauvegarder le fichier
+        Path destination = Paths.get(storagePath);
+        Files.copy(file.getInputStream(), destination);
+
+        // Créer et sauvegarder l'entité
+        CvFile cvFile = new CvFile();
+        cvFile.setFilename(originalFilename);
+        cvFile.setContentType(file.getContentType());
+        cvFile.setSize(file.getSize());
+        cvFile.setStoragePath(storagePath);
+
+        return cvFileRepository.save(cvFile);
+    }
+
+    public CvFile getCurrentCv() {
+        // Récupérer le premier CV (il n'y en a qu'un)
+        return (CvFile) cvFileRepository.findFirstByOrderByIdDesc()
+                .orElse(null);
+    }
+
+    public void deleteCv() throws IOException {
+        CvFile cvFile = getCurrentCv();
+        if (cvFile != null) {
+            // Supprimer le fichier physique
+            if (cvFile.getStoragePath() != null) {
+                Files.deleteIfExists(Paths.get(cvFile.getStoragePath()));
+            }
+            // Supprimer de la base
+            cvFileRepository.delete(cvFile);
+        }
+    }
+
+    public byte[] getCvFileBytes() throws IOException {
+        CvFile cvFile = getCurrentCv();
+        if (cvFile == null || cvFile.getStoragePath() == null) {
+            return null;
+        }
+        return Files.readAllBytes(Paths.get(cvFile.getStoragePath()));
+    }
 
     @Override
     public CvFile createCvFile(CvFile cvFile) {

@@ -19,4 +19,6 @@ public interface ICvFileService {
     void deleteCvFile(Long id);
 
     CvFile uploadCv(MultipartFile file) throws IOException;
+
+    CvFile saveOrUpdateCv(MultipartFile file) throws IOException;
 }

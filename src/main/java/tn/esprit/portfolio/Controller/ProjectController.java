@@ -20,6 +20,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -109,6 +110,116 @@ public class ProjectController {
         return ResponseEntity.ok(finalProject);
     }
 
+    // 🔄 NOUVEAU: Endpoint pour mettre à jour un projet
+    @PutMapping(value = "/{id}", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<Project> updateProject(
+            @PathVariable Long id,
+            @RequestParam("title") String title,
+            @RequestParam("description") String description,
+            @RequestParam("technologies") String technologies,
+            @RequestParam(value = "existingImages", required = false) String existingImagesJson,
+            @RequestParam(value = "images", required = false) List<MultipartFile> images) throws IOException {
+
+        System.out.println("=== DÉBUT Mise à jour Projet ID: " + id + " ===");
+        System.out.println("Titre: " + title);
+        System.out.println("Description: " + description);
+        System.out.println("Technologies: " + technologies);
+        System.out.println("Images existantes JSON: " + existingImagesJson);
+        System.out.println("Nouvelles images: " + (images != null ? images.size() : 0));
+
+        // 1. Récupérer le projet existant
+        Project project = projectService.getProjectById(id);
+
+        // 2. Mettre à jour les champs de base
+        project.setTitle(title);
+        project.setDescription(description);
+        project.setTechnologies(technologies);
+
+        // 3. Gérer les images existantes à conserver
+        List<ProjectImage> imagesToKeep = new ArrayList<>();
+
+        if (existingImagesJson != null && !existingImagesJson.isEmpty()) {
+            System.out.println("📋 Traitement des images existantes à conserver");
+
+            // Parser le JSON des images existantes (format: [{"id":1,"imageUrl":"file.jpg"},...]
+            // Vous pouvez utiliser Jackson ou Gson ici
+            // Pour l'instant, on garde toutes les images existantes si le champ n'est pas vide
+            imagesToKeep.addAll(project.getImages());
+        }
+
+        // 4. Supprimer les images qui ne sont plus dans la liste
+        List<ProjectImage> imagesToDelete = new ArrayList<>();
+        for (ProjectImage existingImage : project.getImages()) {
+            boolean shouldKeep = imagesToKeep.stream()
+                    .anyMatch(img -> img.getId().equals(existingImage.getId()));
+
+            if (!shouldKeep) {
+                imagesToDelete.add(existingImage);
+                System.out.println("🗑️ Image à supprimer: " + existingImage.getImageUrl());
+            }
+        }
+
+        // Supprimer les images de la base de données et du système de fichiers
+        for (ProjectImage imageToDelete : imagesToDelete) {
+            try {
+                // Supprimer le fichier physique
+                Path filePath = uploadDir.resolve(imageToDelete.getImageUrl()).normalize();
+                Files.deleteIfExists(filePath);
+                System.out.println("🗑️ Fichier supprimé: " + imageToDelete.getImageUrl());
+            } catch (IOException e) {
+                System.err.println("❌ Erreur lors de la suppression du fichier: " + e.getMessage());
+            }
+
+            project.getImages().remove(imageToDelete);
+            projectImageRepository.delete(imageToDelete);
+        }
+
+        // 5. Ajouter les nouvelles images
+        if (images != null && !images.isEmpty()) {
+            System.out.println("📸 Ajout de " + images.size() + " nouvelles images");
+
+            for (int i = 0; i < images.size(); i++) {
+                MultipartFile file = images.get(i);
+
+                if (file != null && !file.isEmpty()) {
+                    System.out.println("📁 Traitement nouvelle image " + (i + 1) +
+                            " - Nom: " + file.getOriginalFilename() +
+                            " - Taille: " + file.getSize() + " bytes");
+
+                    String filename = saveFile(file);
+
+                    if (filename != null && !filename.isEmpty()) {
+                        System.out.println("✅ Fichier sauvegardé: " + filename);
+
+                        ProjectImage projectImage = new ProjectImage();
+                        projectImage.setImageUrl(filename);
+                        projectImage.setProject(project);
+
+                        ProjectImage savedImage = projectImageRepository.save(projectImage);
+                        System.out.println("💾 Nouvelle image sauvegardée - ID: " + savedImage.getId());
+
+                        project.getImages().add(savedImage);
+                    }
+                }
+            }
+        }
+
+        // 6. Sauvegarder le projet mis à jour
+        Project updatedProject = projectRepository.save(project);
+
+        // 7. Recharger le projet pour avoir toutes les données
+        Project finalProject = projectRepository.findById(updatedProject.getId())
+                .orElse(updatedProject);
+
+        if (finalProject.getImages() != null) {
+            finalProject.getImages().size(); // Force le chargement des images
+        }
+
+        System.out.println("=== FIN Mise à jour Projet ID: " + id + " - " +
+                finalProject.getImages().size() + " images ===");
+        return ResponseEntity.ok(finalProject);
+    }
+
     // 💾 Sauvegarde fichier
     private String saveFile(MultipartFile file) throws IOException {
         try {
@@ -164,6 +275,33 @@ public class ProjectController {
     public ResponseEntity<Project> getProjectById(@PathVariable Long id) {
         Project project = projectService.getProjectById(id);
         return ResponseEntity.ok(project);
+    }
+
+    // 🗑️ Supprimer un projet
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> deleteProject(@PathVariable Long id) {
+        System.out.println("=== DÉBUT Suppression Projet ID: " + id + " ===");
+
+        Project project = projectService.getProjectById(id);
+
+        // Supprimer les fichiers images du système de fichiers
+        if (project.getImages() != null) {
+            for (ProjectImage image : project.getImages()) {
+                try {
+                    Path filePath = uploadDir.resolve(image.getImageUrl()).normalize();
+                    Files.deleteIfExists(filePath);
+                    System.out.println("🗑️ Fichier supprimé: " + image.getImageUrl());
+                } catch (IOException e) {
+                    System.err.println("❌ Erreur lors de la suppression du fichier: " + e.getMessage());
+                }
+            }
+        }
+
+        // Supprimer le projet (cascade supprimera les images de la DB)
+        projectService.deleteProject(id);
+
+        System.out.println("=== FIN Suppression Projet ID: " + id + " ===");
+        return ResponseEntity.noContent().build();
     }
 
     // 🖼️ Servir une image

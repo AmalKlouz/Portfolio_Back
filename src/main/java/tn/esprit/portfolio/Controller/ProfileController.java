@@ -2,6 +2,7 @@ package tn.esprit.portfolio.Controller;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
@@ -21,6 +22,38 @@ import java.util.List;
 public class ProfileController {
 
     private final ProfileRepo profileRepository;
+    private static final String UPLOAD_DIR = "uploads/";
+
+    // Méthode pour sauvegarder une photo
+    private String savePhoto(MultipartFile photoFile) throws IOException {
+        File uploadFolder = new File(UPLOAD_DIR);
+        if (!uploadFolder.exists()) {
+            uploadFolder.mkdirs();
+        }
+
+        // Générer un nom unique
+        String fileName = System.currentTimeMillis() + "_" +
+                (photoFile.getOriginalFilename() != null ?
+                        photoFile.getOriginalFilename() : "photo");
+
+        Path filePath = Paths.get(UPLOAD_DIR + fileName);
+        Files.write(filePath, photoFile.getBytes());
+
+        return fileName;
+    }
+
+    // Méthode pour supprimer une photo
+    private void deletePhoto(String fileName) {
+        if (fileName != null && !fileName.isEmpty()) {
+            try {
+                Path photoPath = Paths.get(UPLOAD_DIR + fileName);
+                Files.deleteIfExists(photoPath);
+            } catch (IOException e) {
+                log.warn("Impossible de supprimer la photo {}: {}", fileName, e.getMessage());
+            }
+        }
+    }
+
 
     @PostMapping()
     public ResponseEntity<Profile> createProfile(
@@ -62,17 +95,37 @@ public class ProfileController {
                 .orElseThrow(() -> new RuntimeException("Profile not found with id: " + id));
     }
 
-    @PutMapping("/{id}")
-    public Profile updateProfile(@PathVariable Long id, @RequestBody Profile updatedProfile) {
-        Profile profile = profileRepository.findById(id)
+    @PutMapping(value = "/{id}", consumes = {MediaType.APPLICATION_JSON_VALUE, MediaType.MULTIPART_FORM_DATA_VALUE})
+    public ResponseEntity<Profile> updateProfile(
+            @PathVariable Long id,
+            @RequestPart(value = "profile", required = false) Profile profileData,
+            @RequestPart(value = "photo", required = false) MultipartFile photoFile
+    ) throws IOException {
+
+        Profile existingProfile = profileRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Profile not found with id: " + id));
 
-        profile.setFullName(updatedProfile.getFullName());
-        profile.setBio(updatedProfile.getBio());
-        profile.setTitle(updatedProfile.getTitle());
-        profile.setPhotoUrl(updatedProfile.getPhotoUrl());
+        // Mettre à jour les champs texte
+        if (profileData != null) {
+            existingProfile.setFullName(profileData.getFullName());
+            existingProfile.setBio(profileData.getBio());
+            existingProfile.setTitle(profileData.getTitle());
+        }
 
-        return profileRepository.save(profile);
+        // Mettre à jour la photo si fournie
+        if (photoFile != null && !photoFile.isEmpty()) {
+            // Supprimer l'ancienne photo
+            if (existingProfile.getPhotoUrl() != null) {
+                deletePhoto(existingProfile.getPhotoUrl());
+            }
+
+            // Sauvegarder la nouvelle
+            String fileName = savePhoto(photoFile);
+            existingProfile.setPhotoUrl(fileName);
+        }
+
+        Profile updatedProfile = profileRepository.save(existingProfile);
+        return ResponseEntity.ok(updatedProfile);
     }
 
     @DeleteMapping("/{id}")
