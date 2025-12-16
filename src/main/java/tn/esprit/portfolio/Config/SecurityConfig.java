@@ -43,14 +43,7 @@ public class SecurityConfig {
                         .frameOptions(frameOptions -> frameOptions.disable()) // ← DÉSACTIVE X-Frame-Options
                 )
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers(
-                                "/",
-                                "/index.html",
-                                "/assets/**",
-                                "/**/*.js",
-                                "/**/*.css"
-                        ).permitAll()
-                        .requestMatchers("/api/**").authenticated()
+
                         .requestMatchers(HttpMethod.GET, "/api/profiles/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/cvfile/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/projects/**").permitAll()
